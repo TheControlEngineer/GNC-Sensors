@@ -10,8 +10,8 @@ Radiometric detection probability based on material reflectance, beam divergence
   atmospheric extinction, and receiver SNR threshold
 
 The primary entry points are:
-    Lidar.measure()      Ã¢â‚¬â€œ single beam range measurement (relative position input)
-    Lidar.scan_scene()   Ã¢â‚¬â€œ full scan frame against a Scene of geometry primitives
+    Lidar.measure()       single beam range measurement (relative position input)
+    Lidar.scan_scene()    full scan frame against a Scene of geometry primitives
 """
 
 import numpy as np
