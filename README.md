@@ -1,7 +1,8 @@
 # GNC-Sensors
 
-##Lidar Design and Validation Ongoing
+## Lidar Design and Validation Ongoing
 
+*Note:- The following test results and explanations are only for a high level overview, detailed rationale will be included in the design report and test report*
 
 ## Range Testing 
 
