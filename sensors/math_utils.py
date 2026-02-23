@@ -1,157 +1,213 @@
-"""
-This module contains utility functions for mathematical operations, such as vector normalization,
-rotation matrix validation, angle wrapping, linear interpolation, and measurement queue management.
+﻿"""
+Math Utilities Module
 
-These utilities are used throughout the sensor simulation pipeline to ensure consistent handling
-of vector/matrix inputs, temporal interpolation of platform motion, and asynchronous measurement
-scheduling with latency modeling.
+This module provides helper functions for common mathematical operations
+needed across the sensor simulation pipeline. It covers vector normalization,
+rotation matrix validation, angle wrapping, linear interpolation of positions
+over time, and management of pending measurement queues with latency handling.
+
+All functions here ensure consistent treatment of vector and matrix inputs,
+smooth temporal interpolation for moving platforms, and correct scheduling
+of asynchronous measurements.
 """
 
 import numpy as np
 
-# Numerical tolerance used throughout the module to guard against divide by zero
-# and degenerate geometry edge cases (e.g., near zero vector norms, tiny time intervals).
+# Small numerical tolerance to prevent division by zero and handle
+# degenerate edge cases like near-zero vector norms or tiny time gaps.
 eps = 1e-12  # [dimensionless]
 
 
 def _as_vector3(value, name):
     """
-    Validate and coerce input to a flat 3D float vector.
+    Validate and convert an input into a flat 3-element float vector.
 
-    Converts any array like input (list, tuple, np.ndarray, etc.) to a 1D numpy
-    array of length 3 with float64 dtype. Raises ValueError if the input cannot
-    be reshaped to exactly 3 elements.
+    Takes any array-like input (list, tuple, numpy array, etc.) and
+    converts it to a 1D numpy array of exactly 3 elements with float64
+    dtype. Raises a ValueError if the result does not have exactly 3
+    elements.
 
-    :param value: array like input to be coerced into a 3D vector
-    :param name:  descriptive name of the parameter (used in error messages)
+    :param value: Array-like input to convert into a 3D vector.
+    :param name:  Human-readable parameter name, shown in error messages.
 
-    :return: numpy array of shape (3,) with dtype float64
-    :raises ValueError: if the input does not contain exactly 3 elements
+    :return: numpy array of shape (3,) with dtype float64.
+    :raises ValueError: If the input does not contain exactly 3 elements.
     """
-    vec = np.asarray(value, dtype=float).reshape(-1)  # flatten to 1D float array
+    # Convert the input to a numpy float array and flatten it to 1D
+    vec = np.asarray(value, dtype=float).reshape(-1)
+
+    # Check that the flattened array has exactly 3 elements
     if vec.size != 3:
         raise ValueError(f"{name} must be a 3D vector.")
+
+    # Return the validated 3-element vector
     return vec
 
 
 def _as_rotation_matrix(value, name):
     """
-    Validate and coerce input to a 3x3 float rotation matrix.
+    Validate and convert an input into a 3x3 float rotation matrix.
 
-    Converts any array like input to a 3x3 numpy array with float64 dtype.
-    Only validates shape, does NOT check orthogonality or determinant == 1.
+    Takes any array-like input and converts it to a 3x3 numpy array
+    with float64 dtype. Only the shape is validated here; orthogonality
+    and determinant checks are not performed.
 
-    :param value: array like input to be coerced into a 3x3 matrix
-    :param name:  descriptive name of the parameter (used in error messages)
+    :param value: Array-like input to convert into a 3x3 matrix.
+    :param name:  Human-readable parameter name, shown in error messages.
 
-    :return: numpy array of shape (3, 3) with dtype float64
-    :raises ValueError: if the input shape is not (3, 3)
+    :return: numpy array of shape (3, 3) with dtype float64.
+    :raises ValueError: If the resulting shape is not (3, 3).
     """
-    matrix = np.asarray(value, dtype=float)  # cast to float64 ndarray
+    # Cast the input to a float64 numpy array
+    matrix = np.asarray(value, dtype=float)
+
+    # Verify that the shape is exactly 3x3
     if matrix.shape != (3, 3):
         raise ValueError(f"{name} must be a 3x3 rotation matrix.")
+
+    # Return the validated 3x3 matrix
     return matrix
 
 def _normalize(vec, fallback=(1.0, 0.0, 0.0)):
     """
-    Normalize a vector to unit length with robust fallback for near zero vectors.
+    Normalize a vector to unit length, with a safe fallback for zero-length vectors.
 
-    Computes the L2 norm and divides by it. If the vector's norm is smaller than
-    eps (numerical zero), the fallback vector is normalized and returned instead,
-    preventing division by zero.
+    Computes the L2 (Euclidean) norm of the input and divides by it. If the
+    norm is smaller than the module tolerance eps (effectively zero), the
+    fallback vector is normalized and returned instead. This prevents
+    division-by-zero errors in downstream calculations.
 
-    :param vec:      input vector (array like, any dimension)
-    :param fallback: default unit direction returned when input has near zero norm;
-                     defaults to (1, 0, 0) i.e. the +x axis
+    :param vec:      Input vector (array-like, any dimension).
+    :param fallback: Direction to return when the input has near-zero norm.
+                     Defaults to (1, 0, 0), pointing along the +X axis.
 
-    :return: unit length numpy vector
-    :raises ValueError: if both input and fallback have near zero norm
+    :return: Unit-length numpy vector in the same direction as the input.
+    :raises ValueError: If both the input and fallback vectors have near-zero norm.
     """
+    # Convert input to a float numpy array
     vec = np.asarray(vec, dtype=float)
-    norm = np.linalg.norm(vec)  # L2 norm of the input vector
+
+    # Compute the Euclidean (L2) norm of the input vector
+    norm = np.linalg.norm(vec)
+
     if norm < eps:
-        # Input is numerically zero Ã¢â‚¬â€ use the fallback direction instead.
+        # The input vector is effectively zero, so switch to the fallback direction
         fallback = np.asarray(fallback, dtype=float)
+
+        # Compute the norm of the fallback vector
         fallback_norm = np.linalg.norm(fallback)
+
+        # The fallback itself must be non-zero to be usable
         if fallback_norm < eps:
             raise ValueError("Fallback vector must be non-zero.")
-        return fallback / fallback_norm  # return the normalized fallback vector
-    return vec / norm  # return the normalized input vector
 
-def _warp_angle(angle):
+        # Return the fallback vector scaled to unit length
+        return fallback / fallback_norm
+
+    # Return the original vector scaled to unit length
+    return vec / norm
+
+def _wrap_angle(angle):
     """
-    Wrap an angle into the canonical range [-Ãâ‚¬, Ãâ‚¬] radians.
+    Wrap an angle into the range [-pi, pi] radians.
 
-    Uses the branch free modulo formula: output = (input + Ãâ‚¬) mod 2Ãâ‚¬ Ã¢Ë†â€™ Ãâ‚¬.
-    This avoids conditional statements and works for any real valued input.
+    Applies a branch-free modulo formula:
+        result = (angle + pi) mod (2 * pi) - pi
+    This works for any real-valued input without needing conditional logic.
 
-    :param angle: input angle [rad]
-    :return: wrapped angle in [-Ãâ‚¬, Ãâ‚¬] [rad]
+    :param angle: Input angle in radians.
+    :return: Equivalent angle wrapped to the [-pi, pi] interval, in radians.
     """
-    return (angle + np.pi) % (2 * np.pi) - np.pi  # modulo based wrap to [-Ãâ‚¬, Ãâ‚¬] without branching
+    # Apply the modulo wrap: shift by +pi, take mod 2*pi, then shift back by -pi
+    return (angle + np.pi) % (2 * np.pi) - np.pi
 
 def _interpolate_position(t_prev, pos_prev, t_curr, pos_curr, t_query):
     """
-    Linearly interpolate a 3D position between two time stamped samples.
+    Linearly interpolate a 3D position between two time-stamped samples.
 
-    Computes:  pos(t_query) = pos_prev + ÃŽÂ± Ã‚Â· (pos_curr Ã¢Ë†â€™ pos_prev)
-    where ÃŽÂ± = clamp((t_query Ã¢Ë†â€™ t_prev) / (t_curr Ã¢Ë†â€™ t_prev), 0, 1).
+    Computes the interpolated position at t_query using:
+        pos(t_query) = pos_prev + alpha * (pos_curr - pos_prev)
+    where alpha = clamp((t_query - t_prev) / (t_curr - t_prev), 0, 1).
 
     Edge cases handled:
-    If t_prev or pos_prev is None (no prior sample): returns pos_curr.
-    If |dt| < eps (degenerate interval): returns pos_curr to avoid /0.
-    If t_query falls outside [t_prev, t_curr], ÃŽÂ± is clamped to [0, 1].
+        If t_prev or pos_prev is None (no prior sample), pos_curr is returned.
+        If the time interval abs(dt) < eps, pos_curr is returned to avoid division by zero.
+        If t_query lies outside [t_prev, t_curr], alpha is clamped to [0, 1].
 
-    Used by the LiDAR model to align range samples with moving platform motion.
+    This is used by the LiDAR model to align range measurements with a
+    moving platform's trajectory.
 
-    :param t_prev:   previous timestamp [s] (or None)
-    :param pos_prev: previous 3D position [m] (or None)
-    :param t_curr:   current timestamp [s]
-    :param pos_curr: current 3D position [m]
-    :param t_query:  desired sample epoch [s]
+    :param t_prev:   Previous timestamp in seconds (or None if unavailable).
+    :param pos_prev: Previous 3D position in meters (or None if unavailable).
+    :param t_curr:   Current timestamp in seconds.
+    :param pos_curr: Current 3D position in meters.
+    :param t_query:  Desired query time in seconds.
 
-    :return: interpolated 3D position at t_query [m]
+    :return: Interpolated 3D position at t_query, in meters.
     """
+    # Ensure current position is a float numpy array
     pos_curr = np.asarray(pos_curr, dtype=float)
+
+    # If there is no previous sample, the best estimate is the current position
     if t_prev is None or pos_prev is None:
-        return pos_curr  # no prior state available; best estimate is current position
+        return pos_curr
+
+    # Convert all timestamps to plain floats for arithmetic
     t_prev = float(t_prev)
     t_curr = float(t_curr)
     t_query = float(t_query)
+
+    # Compute the time difference between the two samples
     dt = t_curr - t_prev
+
+    # If the interval is too small, return the current position to avoid division by zero
     if abs(dt) < eps:
-        return pos_curr  # degenerate time interval; avoid divide by zero
-    alpha = np.clip((t_query - t_prev) / dt, 0.0, 1.0)  # interpolation factor clamped to [0, 1]
-    return pos_prev + alpha * (pos_curr - pos_prev)  # linear interpolation result
+        return pos_curr
+
+    # Compute the interpolation factor and clamp it to [0, 1]
+    alpha = np.clip((t_query - t_prev) / dt, 0.0, 1.0)
+
+    # Perform the linear interpolation between the two positions
+    return pos_prev + alpha * (pos_curr - pos_prev)
 
 def _pop_latest_ready(pending_measurements, t_now):
     """
-    Pop the latest ready measurement from an ordered pending queue.
+    Pop the most recent ready measurement from a sorted pending queue.
 
-    Measurements are stored as (available_time, data) tuples sorted by ascending
-    available_time. A measurement is "ready" when available_time <= t_now + eps.
-    This function finds all ready entries, extracts the newest one, and removes
-    every ready entry from the front of the list (stale data is discarded).
+    Measurements are stored as (available_time, data) tuples, sorted in
+    ascending order by available_time. A measurement counts as "ready"
+    when its available_time <= t_now + eps. This function scans from the
+    front, finds all ready entries, keeps only the newest one, and
+    removes every ready entry from the list so stale data does not
+    accumulate.
 
-    This ensures the consumer always receives the most recent available data and
-    prevents stale measurements from accumulating in the queue.
+    :param pending_measurements: List of (available_time, measurement_data)
+                                  tuples sorted ascending by available_time.
+                                  This list is modified in place.
+    :param t_now: Current simulation time in seconds.
 
-    :param pending_measurements: list of (available_time, measurement_data) tuples,
-                                  sorted ascending by available_time. Modified in place.
-    :param t_now: current simulation time [s]
-
-    :return: measurement_data of the latest ready entry, or None if nothing is ready
+    :return: The measurement_data from the latest ready entry, or None if
+             no measurement is ready yet.
     """
+    # Count how many measurements at the front of the queue are ready
     ready_count = 0
     for available_time, _ in pending_measurements:
-        if available_time <= t_now + eps:  # measurement has arrived by now
-            ready_count += 1  # tally ready entries; we will return only the newest
+        if available_time <= t_now + eps:
+            # This measurement has arrived; count it as ready
+            ready_count += 1
         else:
-            break  # list is sorted, so all subsequent entries are also not ready
+            # The list is sorted, so everything after this is also not ready
+            break
 
+    # If nothing is ready, return None
     if ready_count == 0:
-        return None  # nothing available yet
+        return None
 
-    _, measurement = pending_measurements[ready_count - 1]  # latest (newest) ready measurement
-    del pending_measurements[:ready_count]  # discard all ready entries from the queue
-    return measurement  # return latest ready measurement data
+    # Grab the data from the last (most recent) ready measurement
+    _, measurement = pending_measurements[ready_count - 1]
+
+    # Remove all ready entries from the front of the queue
+    del pending_measurements[:ready_count]
+
+    # Return the newest ready measurement data
+    return measurement
