@@ -1,17 +1,17 @@
 """
-LiDAR sensor truth model with scene physics scanning support.
+LiDAR Sensor Truth Model
 
-This module implements a high fidelity LiDAR sensor simulator that models:
-Range measurement with configurable noise, bias, scale factor, and outlier injection
-Field of view gating, dropout, and output quantization / saturation
-Asynchronous sampling with latency, jitter, and interpolation of platform motion
-Full 3D scan pattern generation with per beam ray casting into a Scene
-Radiometric detection probability based on material reflectance, beam divergence,
-  atmospheric extinction, and receiver SNR threshold
+This module implements a high-fidelity LiDAR sensor simulator covering
+range measurement with configurable noise, bias, scale factor, and outlier
+injection, field-of-view gating, dropout, output quantization and saturation,
+asynchronous sampling with latency, jitter, and platform-motion interpolation,
+full 3D scan-pattern generation with per-beam ray casting into a Scene, and
+radiometric detection probability based on material reflectance, beam divergence,
+atmospheric extinction, and receiver SNR threshold.
 
 The primary entry points are:
-    Lidar.measure()       single beam range measurement (relative position input)
-    Lidar.scan_scene()    full scan frame against a Scene of geometry primitives
+    Lidar.measure()       Single-beam range measurement (relative position input).
+    Lidar.scan_scene()    Full scan frame against a Scene of geometry primitives.
 """
 
 import numpy as np
@@ -24,23 +24,23 @@ class Lidar:
     """
     Configurable LiDAR sensor truth model.
 
-    Instantiated from a LidarConfig (or any object exposing the same attributes).
-    Maintains internal RNG state, bias random walk state, and asynchronous
-    measurement queues for both single beam and scene scan modes.
+    Built from a LidarConfig (or any object exposing the same attributes).
+    Maintains internal RNG state, bias random-walk state, and asynchronous
+    measurement queues for both single-beam and scene-scan modes.
     """
     def __init__(self, config=LidarConfig, boresight=None):
         """
-        Initialise the LiDAR model from a configuration object.
+        Initialize the LiDAR model from a configuration object.
 
-        :param config:    class or instance carrying LidarConfig compatible attributes
-        :param boresight: optional 3D unit vector defining the sensor boresight direction
-                          in the sensor body frame; defaults to +x = [1, 0, 0]
+        :param config:    Class or instance with LidarConfig-compatible attributes.
+        :param boresight: Optional 3D unit vector for the sensor boresight direction
+                          in the body frame. Defaults to +X = [1, 0, 0].
         """
         # ---------- core instrument envelope ----------
         self.range_min = float(config.range_min)            # [m] minimum detectable range
         self.range_max = float(config.range_max)            # [m] maximum detectable range
-        self.range_accuracy = float(config.range_accuracy)  # [m] 1 ÃÆ’ Gaussian range noise
-        self.fov = float(config.fov)                        # [rad] full cone field of view
+        self.range_accuracy = float(config.range_accuracy)  # [m] 1-sigma Gaussian range noise
+        self.fov = float(config.fov)                        # [rad] full-cone field of view
         if self.range_min < 0.0:
             raise ValueError("range_min must be >= 0.")
         if self.range_max <= self.range_min:
@@ -49,13 +49,13 @@ class Lidar:
             raise ValueError("range_accuracy must be >= 0.")
         if not (0.0 < self.fov <= np.pi):
             raise ValueError("fov must be in the range (0, pi].")
-        self._cos_half_fov = float(np.cos(self.fov * 0.5))  # pre computed for fast FoV check
+        self._cos_half_fov = float(np.cos(self.fov * 0.5))  # precomputed cosine for fast FoV gating
 
         # ---------- timing model ----------
         self.sampling_rate = float(config.sampling_rate)     # [Hz] nominal sample rate
         if self.sampling_rate < 0.0:
             raise ValueError("sampling_rate must be >= 0.")
-        # Period between consecutive samples; infinite when rate is zero (single shot mode).
+        # Period between consecutive samples; infinite when rate is zero (single-shot mode).
         self.sampling_period = float("inf") if self.sampling_rate <= eps else 1.0 / self.sampling_rate
         self.latency = max(float(getattr(config, "latency", 0.0)), 0.0)  # [s] output latency
 
@@ -65,17 +65,17 @@ class Lidar:
         self.rng = np.random.default_rng(self.random_seed)                       # numpy RNG instance
 
         # ---------- range noise model ----------
-        # sigma_total(r) = sqrt(range_accuracyÃ‚Â² + noise_floor_stdÃ‚Â² + (noise_range_coeff * r)Ã‚Â²)
+        # sigma_total(r) = sqrt(range_accuracy^2 + noise_floor_std^2 + (noise_range_coeff * r)^2)
         self.noise_floor_std = max(float(getattr(config, "noise_floor_std", 0.0)), 0.0)    # [m]
         self.noise_range_coeff = max(float(getattr(config, "noise_range_coeff", 0.0)), 0.0) # [m/m]
 
         # ---------- bias and scale model ----------
         # measured = true * (1 + scale_factor) + bias + noise + outlier
-        self.bias_init_std = max(float(getattr(config, "bias_init_std", 0.0)), 0.0)        # [m] initial bias 1 ÃÆ’
-        self.bias_rw_std = max(float(getattr(config, "bias_rw_std", 0.0)), 0.0)            # [m/Ã¢Ë†Å¡s] random walk diffusion
+        self.bias_init_std = max(float(getattr(config, "bias_init_std", 0.0)), 0.0)        # [m] initial bias 1-sigma
+        self.bias_rw_std = max(float(getattr(config, "bias_rw_std", 0.0)), 0.0)            # [m/sqrt(s)] random walk diffusion
         self.bias_drift_rate = float(getattr(config, "bias_drift_rate", 0.0))               # [m/s] deterministic drift
         self.scale_factor_ppm = float(getattr(config, "scale_factor_ppm", 0.0))             # [ppm] fixed scale offset
-        self.scale_error_std_ppm = max(float(getattr(config, "scale_error_std_ppm", 0.0)), 0.0)  # [ppm] random scale 1 ÃÆ’
+        self.scale_error_std_ppm = max(float(getattr(config, "scale_error_std_ppm", 0.0)), 0.0)  # [ppm] random scale 1-sigma
 
         # ---------- output discretization / saturation ----------
         self.quantization_step = max(float(getattr(config, "quantization_step", 0.0)), 0.0)  # [m] 0 = disabled
@@ -83,7 +83,7 @@ class Lidar:
 
         # ---------- data quality model ----------
         self.dropout_prob = float(np.clip(getattr(config, "dropout_prob", 0.0), 0.0, 1.0))   # baseline dropout probability
-        self.dropout_range_coeff = float(getattr(config, "dropout_range_coeff", 0.0))         # extra dropout vs. normalised range
+        self.dropout_range_coeff = float(getattr(config, "dropout_range_coeff", 0.0))         # extra dropout vs. normalized range
         self.outlier_prob = float(np.clip(getattr(config, "outlier_prob", 0.0), 0.0, 1.0))    # gross error probability
         self.outlier_std = max(float(getattr(config, "outlier_std", 0.0)), 0.0)               # [m] outlier spread
         self.outlier_bias = float(getattr(config, "outlier_bias", 0.0))                       # [m] deterministic outlier offset
@@ -113,7 +113,7 @@ class Lidar:
         self.beam_divergence = max(float(getattr(config, "beam_divergence", np.deg2rad(0.2))), 0.0)  # [rad] full angle
         self.pulse_energy = max(float(getattr(config, "pulse_energy", 1.0)), 0.0)                     # [arb] emitted energy
         self.receiver_aperture_area = max(float(getattr(config, "receiver_aperture_area", 1.0)), eps)  # [arb] effective aperture
-        self.atmosphere_extinction_coeff = max(float(getattr(config, "atmosphere_extinction_coeff", 0.0)), 0.0)  # [1/m] BeerÃ¢â‚¬â€œLambert
+        self.atmosphere_extinction_coeff = max(float(getattr(config, "atmosphere_extinction_coeff", 0.0)), 0.0)  # [1/m] Beer-Lambert
         self.min_detectable_power = max(float(getattr(config, "min_detectable_power", 1e-6)), eps)     # [arb] detection threshold
         self.intensity_noise_std = max(float(getattr(config, "intensity_noise_std", 0.0)), 0.0)        # [arb] additive noise
 
@@ -146,13 +146,13 @@ class Lidar:
 
     def _build_invalid(self, timestamp, reason=None, stale=False, truth_range=None):
         """
-        Construct a dictionary representing an invalid (no detection) measurement.
+        Construct a dictionary representing an invalid (no-detection) measurement.
 
-        :param timestamp:   sample epoch [s]
-        :param reason:      human readable cause string (e.g. "out_of_range", "dropout")
-        :param stale:       True when returning a placeholder because no new data is ready
-        :param truth_range: ground truth range [m], attached when include_metadata is True
-        :return: dict with valid=False and optional diagnostics
+        :param timestamp:   Sample epoch [s].
+        :param reason:      Human-readable cause string (e.g. "out_of_range", "dropout").
+        :param stale:       True when returning a placeholder because no new data is ready.
+        :param truth_range: Ground truth range [m], attached when include_metadata is True.
+        :return: Dict with valid=False and optional diagnostics.
         """
         measurement = {"valid": False, "timestamp": float(timestamp)}
         if reason is not None:
@@ -165,13 +165,13 @@ class Lidar:
 
     def _build_stale_frame(self, timestamp):
         """
-        Construct a stale (no new data) scene scan frame placeholder.
+        Construct a stale (no new data) scene-scan frame placeholder.
 
         Returned by scan_scene() when the latency pipeline has not yet delivered
         a new frame at the queried time.
 
-        :param timestamp: query epoch [s]
-        :return: dict with valid=False, stale=True, and an empty returns list
+        :param timestamp: Query epoch [s].
+        :return: Dict with valid=False, stale=True, and an empty returns list.
         """
         return {
             "valid": False,
@@ -185,14 +185,15 @@ class Lidar:
         """
         Advance the bias random walk and deterministic drift to a new sample epoch.
 
-        Bias model:  bias(t) = bias(t_prev) + drift_rate * dt + N(0, rw_std * sqrt(dt))
+        Bias model: bias(t) = bias(t_prev) + drift_rate * dt + N(0, rw_std * sqrt(dt))
+
         Called once per measurement so that the bias evolves continuously.
 
-        :param sample_time: current sample epoch [s]
-        :param stochastic:  if False, suppress the random walk component (deterministic mode)
+        :param sample_time: Current sample epoch [s].
+        :param stochastic:  If False, suppress the random-walk component (deterministic mode).
         """
         if self._last_bias_update_time is None:
-            self._last_bias_update_time = float(sample_time)  # first call Ã¢â‚¬â€ initialise clock
+            self._last_bias_update_time = float(sample_time)  # first call -- initialize clock
             return
 
         dt = max(float(sample_time) - self._last_bias_update_time, 0.0)  # [s] elapsed time
@@ -207,45 +208,45 @@ class Lidar:
 
     def _noise_std(self, true_range):
         """
-        Compute the composite 1 ÃÆ’ range noise at a given true range.
+        Compute the composite 1-sigma range noise at a given true range.
 
-        sigma_total(r) = sqrt(range_accuracyÃ‚Â² + noise_floor_stdÃ‚Â² + (noise_range_coeff * r)Ã‚Â²)
+        sigma_total(r) = sqrt(range_accuracy^2 + noise_floor_std^2 + (noise_range_coeff * r)^2)
 
-        :param true_range: ground truth range to target [m]
-        :return: total 1 ÃÆ’ noise standard deviation [m]
+        :param true_range: Ground truth range to target [m].
+        :return: Total 1-sigma noise standard deviation [m].
         """
         return float(np.sqrt(
             self.range_accuracy * self.range_accuracy            # constant accuracy term
             + self.noise_floor_std * self.noise_floor_std        # additive noise floor term
-            + (self.noise_range_coeff * true_range) * (self.noise_range_coeff * true_range)  # range proportional term
+            + (self.noise_range_coeff * true_range) * (self.noise_range_coeff * true_range)  # range-proportional term
         ))
 
     def _dropout_probability(self, true_range):
         """
         Compute the total dropout (missed detection) probability for a given range.
 
-        p_drop(r) = clamp( dropout_prob + dropout_range_coeff * normalised_range , 0, 1 )
-        where normalised_range = (r - range_min) / (range_max - range_min)
+        p_drop(r) = clamp( dropout_prob + dropout_range_coeff * normalized_range, 0, 1 )
+        where normalized_range = (r - range_min) / (range_max - range_min)
 
-        :param true_range: ground truth range [m]
-        :return: dropout probability [0..1]
+        :param true_range: Ground truth range [m].
+        :return: Dropout probability [0..1].
         """
         span = max(self.range_max - self.range_min, eps)  # full range span, guarded against zero
-        range_ratio = np.clip((true_range - self.range_min) / span, 0.0, 1.0)  # normalised range [0..1]
+        range_ratio = np.clip((true_range - self.range_min) / span, 0.0, 1.0)  # normalized range [0..1]
         return float(np.clip(self.dropout_prob + self.dropout_range_coeff * range_ratio, 0.0, 1.0))
 
     def _apply_output_limits(self, measured_range, timestamp, truth_range):
         """
         Apply quantization and saturation/clipping to a measured range value.
 
-        1. If quantization_step > 0: round to nearest quantization step.
-        2. If saturate_output is True: clamp to [range_min, range_max].
-           Otherwise: invalidate the measurement if it falls outside the range.
+        1. If quantization_step > 0, round to the nearest quantization step.
+        2. If saturate_output is True, clamp to [range_min, range_max].
+           Otherwise, invalidate the measurement if it falls outside the range.
 
-        :param measured_range: noisy measured range [m]
-        :param timestamp:      sample epoch [s] (for invalid measurement construction)
-        :param truth_range:    ground truth range [m] (for metadata)
-        :return: (clamped_range, None) if valid, or (None, invalid_dict) if saturated out
+        :param measured_range: Noisy measured range [m].
+        :param timestamp:      Sample epoch [s] (for invalid measurement construction).
+        :param truth_range:    Ground truth range [m] (for metadata).
+        :return: (clamped_range, None) if valid, or (None, invalid_dict) if saturated out.
         """
         if self.quantization_step > eps:
             # Round to the nearest quantization step.
@@ -254,7 +255,7 @@ class Lidar:
         if self.saturate_output:
             return float(np.clip(measured_range, self.range_min, self.range_max)), None  # clamp and accept
 
-        # In non saturate mode, out of range values produce an invalid measurement.
+        # In non-saturate mode, out of range values produce an invalid measurement.
         if measured_range < self.range_min or measured_range > self.range_max:
             return None, self._build_invalid(timestamp, reason="saturated", truth_range=truth_range)
         return float(measured_range), None  # within limits
@@ -267,10 +268,10 @@ class Lidar:
 
         The result is then passed through _apply_output_limits for quantization/saturation.
 
-        :param true_range: ground truth range [m]
-        :param timestamp:  sample epoch [s]
-        :param add_noise:  if False, suppress all stochastic terms
-        :return: measurement dict with valid/range/timestamp + optional truth metadata
+        :param true_range: Ground truth range [m].
+        :param timestamp:  Sample epoch [s].
+        :param add_noise:  If False, suppress all stochastic terms.
+        :return: Measurement dict with valid/range/timestamp and optional truth metadata.
         """
         stochastic = bool(add_noise)
         self._update_bias_state(timestamp, stochastic=stochastic)  # advance bias RW
@@ -308,32 +309,35 @@ class Lidar:
             measurement["truth_range"] = float(true_range)            # [m] ground truth
             measurement["scale_factor"] = float(1.0 + self._scale_factor)  # applied scale
             measurement["bias"] = float(self._bias_state)             # current bias state [m]
-            measurement["noise_std"] = float(noise_std)               # 1 ÃÆ’ noise used [m]
+            measurement["noise_std"] = float(noise_std)               # 1-sigma noise used [m]
             measurement["outlier_applied"] = outlier_applied           # was an outlier injected?
         return measurement
 
     def _instant_measure(self, rel_position, add_noise=True, timestamp=0.0):
         """
-        Single shot range measurement from a relative position vector.
+        Single-shot range measurement from a relative position vector.
 
         Checks range limits and FoV gating before forwarding to the range
-        measurement model. No sampling / latency scheduling is performed.
+        measurement model. No sampling or latency scheduling is performed.
 
-        :param rel_position: target position relative to the sensor [m]
-        :param add_noise:    enable stochastic error terms
-        :param timestamp:    sample epoch [s]
-        :return: measurement dict
+        :param rel_position: Target position relative to the sensor [m].
+        :param add_noise:    Enable stochastic error terms.
+        :param timestamp:    Sample epoch [s].
+        :return: Measurement dict.
         """
         rel_position = _as_vector3(rel_position, "rel_position")
         true_range = float(np.linalg.norm(rel_position))  # [m] Euclidean distance
 
         # Range gate: reject targets outside [range_min, range_max].
-        if true_range < max(self.range_min, eps) or true_range > self.range_max:
+        if true_range < self.range_min or true_range > self.range_max:
             return self._build_invalid(timestamp, reason="out_of_range", truth_range=true_range)
 
+        if true_range <= eps:
+            return self._range_measurement_model(0.0, timestamp=timestamp, add_noise=add_noise)
+
         # Field of view gate: reject targets outside the sensor cone.
-        los = rel_position / true_range  # line of sight unit vector
-        cos_angle = float(np.clip(np.dot(los, self.boresight), -1.0, 1.0))  # cosine of off boresight angle
+        los = rel_position / true_range  # line-of-sight unit vector
+        cos_angle = float(np.clip(np.dot(los, self.boresight), -1.0, 1.0))  # cosine of off-boresight angle
         if cos_angle < self._cos_half_fov:
             return self._build_invalid(timestamp, reason="out_of_fov", truth_range=true_range)
 
@@ -347,9 +351,9 @@ class Lidar:
         the measurement to pending_measurements. A monotonicity guard ensures
         that available_time is strictly increasing.
 
-        :param sample_time:  sample epoch [s]
-        :param measurement:  completed measurement dict
-        :param add_noise:    if True, add latency jitter
+        :param sample_time:  Sample epoch [s].
+        :param measurement:  Completed measurement dict.
+        :param add_noise:    If True, add latency jitter.
         """
         latency_value = self.latency  # [s] nominal latency
         if add_noise and self.latency_jitter_std > 0.0:
@@ -365,12 +369,12 @@ class Lidar:
 
     def measure(self, rel_position, add_noise=True, current_time=None):
         """
-        Primary single beam measurement interface.
+        Primary single-beam measurement interface.
 
-        If current_time is None: performs an immediate (instantaneous) measurement
-        with no sampling / latency scheduling.
+        If current_time is None, an immediate (instantaneous) measurement is
+        performed with no sampling or latency scheduling.
 
-        If current_time is provided: runs the asynchronous sampling pipeline:
+        If current_time is provided, the asynchronous sampling pipeline runs:
         1. Align next_sample_time to the first call's timestamp.
         2. Detect time reversals and reset the pipeline if needed.
         3. Generate all samples that fall within [last_input_time, current_time],
@@ -379,22 +383,27 @@ class Lidar:
         5. Schedule each through the latency pipeline.
         6. Pop and return the latest measurement whose latency has elapsed.
 
-        :param rel_position: target position relative to the sensor [m]
-        :param add_noise:    enable stochastic terms (noise, dropout, jitter, outlier)
-        :param current_time: simulation clock [s]; None = instantaneous mode
-        :return: measurement dict
+        :param rel_position: Target position relative to the sensor [m].
+        :param add_noise:    Enable stochastic terms (noise, dropout, jitter, outlier).
+        :param current_time: Simulation clock [s]. None = instantaneous mode.
+        :return: Measurement dict.
         """
         if current_time is None:
-            return self._instant_measure(rel_position, add_noise=add_noise, timestamp=0.0)
+            measurement = self._instant_measure(rel_position, add_noise=add_noise, timestamp=0.0)
+            if measurement.get("valid", False):
+                truth_range = float(measurement.get("truth_range", np.linalg.norm(_as_vector3(rel_position, "rel_position"))))
+                if bool(add_noise) and float(self.rng.random()) < self._dropout_probability(truth_range):
+                    measurement = self._build_invalid(0.0, reason="dropout", truth_range=truth_range)
+            return measurement
 
         rel_position = _as_vector3(rel_position, "rel_position")
         t = float(current_time)
 
-        # On first call, synchronise the sample clock to the simulation clock.
+        # On first call, synchronize the sample clock to the simulation clock.
         if self.last_input_time is None and not self.pending_measurements and self.next_sample_time == 0.0:
             self.next_sample_time = t
 
-        # Detect time reversal (caller rewound the clock) Ã¢â‚¬â€ reset the pipeline.
+        # Detect time reversal (caller rewound the clock) -- reset the pipeline.
         if self.last_input_time is not None and t + eps < self.last_input_time:
             self.pending_measurements.clear()
             self.next_sample_time = t
@@ -454,18 +463,19 @@ class Lidar:
         """
         Build (and cache) the full scan pattern in the sensor body frame.
 
-        Generates a grid of beam directions from the azimuth Ãƒâ€” elevation scan parameters.
-        Each entry is a tuple: (elev_idx, az_idx, elevation, azimuth, direction_unit_vector).
+        Generates a grid of beam directions from the azimuth x elevation scan
+        parameters. Each entry is a tuple:
+            (elev_idx, az_idx, elevation, azimuth, direction_unit_vector)
 
         Direction vector in sensor frame:
             x = cos(elev) * cos(az)
             y = cos(elev) * sin(az)
             z = sin(elev)
 
-        The result is cached in _beam_pattern_cache because it does not change
-        between frames for a given sensor configuration.
+        The result is cached in _beam_pattern_cache because the pattern does
+        not change between frames for a given sensor configuration.
 
-        :return: list of (elev_idx, az_idx, elevation, azimuth, direction) tuples
+        :return: List of (elev_idx, az_idx, elevation, azimuth, direction) tuples.
         """
         if self._beam_pattern_cache is not None:
             return self._beam_pattern_cache  # return cached pattern
@@ -492,57 +502,57 @@ class Lidar:
         Compute received optical power for a single LiDAR return.
 
         Radiometric model (simplified lidar equation):
-            P_rx = E_tx * (rho_d * cos(theta) + rho_r) * A_rx / (4Ãâ‚¬ rÃ‚Â²)
+            P_rx = E_tx * (rho_d * cos(theta) + rho_r) * A_rx / (4 * pi * r^2)
                    * exp(-2 * alpha * r) / A_footprint
 
         Where:
             E_tx          = pulse_energy                [arb]
             rho_d         = Lambertian reflectivity     [0..1]
-            rho_r         = retro reflectivity          [0..1]
+            rho_r         = retro-reflectivity          [0..1]
             cos(theta)    = incidence_cos               [0..1]
             A_rx          = receiver_aperture_area      [arb]
             r             = distance                    [m]
             alpha         = atmosphere_extinction_coeff [1/m]
-            A_footprint   = pi * (r * tan(div/2))^2     [mÃ‚Â²]
+            A_footprint   = pi * (r * tan(div/2))^2     [m^2]
 
-        :param distance:       range to target [m]
-        :param incidence_cos:  cosine of angle between ray and surface normal [0..1]
-        :param material:       Material dataclass with reflectivity attributes
-        :return: received power [arb]
+        :param distance:       Range to target [m].
+        :param incidence_cos:  Cosine of angle between incoming ray and surface normal [0..1].
+        :param material:       Material dataclass with reflectivity attributes.
+        :return: Received power [arb].
         """
         reflectivity = float(np.clip(getattr(material, "reflectivity", 0.5), 0.0, 1.0))
         retro = float(np.clip(getattr(material, "retro_reflectivity", 0.0), 0.0, 1.0))
 
         beam_radius = max(distance * np.tan(self.beam_divergence * 0.5), 1e-6)  # [m] beam footprint radius
-        footprint_area = np.pi * beam_radius * beam_radius                       # [mÃ‚Â²] illuminated area
-        geometric_term = self.receiver_aperture_area / max(4.0 * np.pi * distance * distance, eps)  # 1/rÃ‚Â² geometric falloff
+        footprint_area = np.pi * beam_radius * beam_radius                       # [m^2] illuminated area
+        geometric_term = self.receiver_aperture_area / max(4.0 * np.pi * distance * distance, eps)  # 1/r^2 geometric falloff
         reflectance_term = reflectivity * incidence_cos + retro                   # combined surface reflectance
-        attenuation = np.exp(-2.0 * self.atmosphere_extinction_coeff * distance)  # two way BeerÃ¢â‚¬â€œLambert extinction
+        attenuation = np.exp(-2.0 * self.atmosphere_extinction_coeff * distance)  # two-way Beer-Lambert extinction
         return float(self.pulse_energy * reflectance_term * geometric_term * attenuation / max(footprint_area, eps))
 
     def _hit_to_beam_return(self, hit, direction_world, timestamp, add_noise):
         """
-        Convert a RayHit into a single beam measurement dictionary.
+        Convert a RayHit into a single-beam measurement dictionary.
 
-        Applies range gating, grazing angle rejection, radiometric SNR based
+        Applies range gating, grazing-angle rejection, radiometric SNR-based
         detection probability, and dropout. Attaches hit metadata when enabled.
 
-        :param hit:             RayHit from scene.cast_ray()
-        :param direction_world: beam direction in world frame [unit]
-        :param timestamp:       sample epoch [s]
-        :param add_noise:       enable stochastic terms
-        :return: measurement dict
+        :param hit:             RayHit from scene.cast_ray().
+        :param direction_world: Beam direction in world frame [unit].
+        :param timestamp:       Sample epoch [s].
+        :param add_noise:       Enable stochastic terms.
+        :return: Measurement dict.
         """
         true_range = float(hit.distance)  # [m] ground truth range to hit
 
         # Range gate: reject hits outside [range_min, range_max].
-        if true_range < max(self.range_min, eps) or true_range > self.range_max:
+        if true_range < self.range_min or true_range > self.range_max:
             return self._build_invalid(timestamp, reason="out_of_range", truth_range=true_range)
 
         # Incidence angle: cosine of angle between incoming ray and surface normal.
         incidence_cos = float(np.clip(np.dot(-direction_world, hit.normal), 0.0, 1.0))
         if incidence_cos <= eps:
-            return self._build_invalid(timestamp, reason="grazing_angle", truth_range=true_range)  # near parallel hit
+            return self._build_invalid(timestamp, reason="grazing_angle", truth_range=true_range)  # near-parallel hit
 
         # Compute received power via the radiometric model.
         received_power = self._received_power(true_range, incidence_cos, hit.material)
@@ -550,18 +560,24 @@ class Lidar:
             received_power += float(self.rng.normal(0.0, self.intensity_noise_std))  # additive intensity noise
         received_power = max(received_power, 0.0)  # physical floor
 
-        # Detection probability: sigmoid like function of SNR = P_rx / (P_rx + P_min).
+        # Detection probability: sigmoid-like function of SNR = P_rx / (P_rx + P_min).
         detection_probability = float(np.clip(received_power / (received_power + self.min_detectable_power), 0.0, 1.0))
-        if add_noise and float(self.rng.random()) > detection_probability:
-            # Failed to detect Ã¢â‚¬â€ below SNR threshold.
-            measurement = self._build_invalid(timestamp, reason="below_snr", truth_range=true_range)
+        if add_noise:
+            if float(self.rng.random()) > detection_probability:
+                # Failed to detect -- below SNR threshold.
+                measurement = self._build_invalid(timestamp, reason="below_snr", truth_range=true_range)
+            else:
+                # Detected -- produce a range measurement and apply dropout.
+                measurement = self._range_measurement_model(true_range, timestamp=timestamp, add_noise=True)
+                if measurement.get("valid", False) and float(self.rng.random()) < self._dropout_probability(true_range):
+                    measurement = self._build_invalid(timestamp, reason="dropout", truth_range=true_range)
         else:
-            # Detected Ã¢â‚¬â€ produce a range measurement and apply dropout.
-            measurement = self._range_measurement_model(true_range, timestamp=timestamp, add_noise=add_noise)
-            if measurement.get("valid", False) and add_noise and float(self.rng.random()) < self._dropout_probability(true_range):
-                measurement = self._build_invalid(timestamp, reason="dropout", truth_range=true_range)
+            if received_power < self.min_detectable_power:
+                measurement = self._build_invalid(timestamp, reason="below_snr", truth_range=true_range)
+            else:
+                measurement = self._range_measurement_model(true_range, timestamp=timestamp, add_noise=False)
 
-        # Attach per beam metadata (radiometric and geometric diagnostics).
+        # Attach per-beam metadata (radiometric and geometric diagnostics).
         if self.include_metadata:
             measurement["incidence_cos"] = incidence_cos                              # surface incidence cosine
             measurement["received_power"] = float(received_power)                    # [arb] received power
@@ -577,15 +593,15 @@ class Lidar:
         Produce a complete scan frame by ray casting through a Scene.
 
         Iterates over every beam in the scan pattern, transforms it from sensor
-        frame to world frame, casts it into the scene, and collects per beam
+        frame to world frame, casts it into the scene, and collects per-beam
         measurement dictionaries.
 
-        :param scene:              Scene object with a cast_ray() method
-        :param sensor_position:    sensor origin in world space [m]
-        :param sensor_orientation: 3Ãƒâ€”3 rotation matrix (sensor Ã¢â€ â€™ world); None = identity
-        :param timestamp:          frame epoch [s]
-        :param add_noise:          enable stochastic error terms
-        :return: frame dict with type="frame", returns list, and summary statistics
+        :param scene:              Scene object with a cast_ray() method.
+        :param sensor_position:    Sensor origin in world space [m].
+        :param sensor_orientation: 3x3 rotation matrix (sensor -> world). None = identity.
+        :param timestamp:          Frame epoch [s].
+        :param add_noise:          Enable stochastic error terms.
+        :return: Frame dict with type="frame", returns list, and summary statistics.
         """
         if not hasattr(scene, "cast_ray"):
             raise TypeError("scene must provide a cast_ray(origin, direction, max_range, min_range) method.")
@@ -593,7 +609,7 @@ class Lidar:
         origin_world = _as_vector3(sensor_position, "sensor_position")  # [m] sensor origin in world frame
         rotation = np.eye(3, dtype=float) if sensor_orientation is None else _as_rotation_matrix(
             sensor_orientation, "sensor_orientation"
-        )  # 3Ãƒâ€”3 rotation matrix (sensor body Ã¢â€ â€™ world)
+        )  # 3x3 rotation matrix (sensor body -> world)
 
         beam_pattern = self._beam_directions_sensor_frame()  # cached scan pattern
         frame_returns = []
@@ -631,7 +647,7 @@ class Lidar:
                 valid_count += 1
             frame_returns.append(beam_measurement)
 
-        # Assemble the frame level output dictionary.
+        # Assemble the frame-level output dictionary.
         frame = {
             "valid": True,
             "type": "frame",
@@ -642,21 +658,23 @@ class Lidar:
         }
         if self.include_metadata:
             frame["sensor_position"] = origin_world.tolist()   # [m] sensor origin
-            frame["sensor_orientation"] = rotation.tolist()     # 3Ãƒâ€”3 rotation used
+            frame["sensor_orientation"] = rotation.tolist()     # 3x3 rotation used
         return frame
 
     def _schedule_scene_frame(self, sample_time, frame, add_noise):
         """
-        Push a scene scan frame into the latency pipeline (analogous to _schedule_measurement).
+        Push a scene-scan frame into the latency pipeline.
 
-        :param sample_time: frame sample epoch [s]
-        :param frame:       completed frame dict
-        :param add_noise:   if True, add latency jitter
+        Analogous to _schedule_measurement but operates on complete scan frames.
+
+        :param sample_time: Frame sample epoch [s].
+        :param frame:       Completed frame dict.
+        :param add_noise:   If True, add latency jitter.
         """
         latency_value = self.latency  # [s] nominal latency
         if add_noise and self.latency_jitter_std > 0.0:
             latency_value += float(self.rng.normal(0.0, self.latency_jitter_std))  # jitter [s]
-        latency_value = max(latency_value, 0.0)  # clamp to non negative
+        latency_value = max(latency_value, 0.0)  # clamp to non-negative
 
         available_time = sample_time + latency_value  # [s] when this frame becomes available
         # Enforce strict monotonicity on available times.
@@ -667,23 +685,23 @@ class Lidar:
 
     def scan_scene(self, scene, sensor_position, sensor_orientation=None, add_noise=True, current_time=None):
         """
-        Primary scene scan measurement interface (full scan pattern with latency pipeline).
+        Primary scene-scan measurement interface (full scan pattern with latency pipeline).
 
-        If current_time is None: produces an instantaneous (no latency) frame.
+        If current_time is None, an instantaneous (no-latency) frame is produced.
 
-        If current_time is provided: runs the asynchronous sampling pipeline:
-        1. Aligns the sample clock on first call.
-        2. Detects time reversals and resets the scene pipeline if needed.
-        3. Generates all frames that fall within [last_scene_input_time, current_time].
-        4. Schedules each frame through the latency pipeline.
-        5. Pops and returns the latest frame whose latency has elapsed.
+        If current_time is provided, the asynchronous sampling pipeline runs:
+        1. Align the sample clock on the first call.
+        2. Detect time reversals and reset the scene pipeline if needed.
+        3. Generate all frames that fall within [last_scene_input_time, current_time].
+        4. Schedule each frame through the latency pipeline.
+        5. Pop and return the latest frame whose latency has elapsed.
 
-        :param scene:              Scene object with a cast_ray() method
-        :param sensor_position:    sensor origin in world space [m]
-        :param sensor_orientation: 3Ãƒâ€”3 rotation matrix (sensor Ã¢â€ â€™ world); None = identity
-        :param add_noise:          enable stochastic terms
-        :param current_time:       simulation clock [s]; None = instantaneous mode
-        :return: frame dict
+        :param scene:              Scene object with a cast_ray() method.
+        :param sensor_position:    Sensor origin in world space [m].
+        :param sensor_orientation: 3x3 rotation matrix (sensor -> world). None = identity.
+        :param add_noise:          Enable stochastic terms.
+        :param current_time:       Simulation clock [s]. None = instantaneous mode.
+        :return: Frame dict.
         """
         if current_time is None:
             return self.simulate_scene_frame(
@@ -696,11 +714,11 @@ class Lidar:
 
         t = float(current_time)
 
-        # On first call, synchronise the scene scan clock to the simulation clock.
+        # On first call, synchronize the scene scan clock to the simulation clock.
         if self.last_scene_input_time is None and not self.pending_scene_frames and self.next_scene_sample_time == 0.0:
             self.next_scene_sample_time = t
 
-        # Detect time reversal Ã¢â‚¬â€ reset the scene pipeline.
+        # Detect time reversal -- reset the scene pipeline.
         if self.last_scene_input_time is not None and t + eps < self.last_scene_input_time:
             self.pending_scene_frames.clear()
             self.next_scene_sample_time = t
