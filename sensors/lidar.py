@@ -114,7 +114,7 @@ class Lidar:
         self.pulse_energy = max(float(getattr(config, "pulse_energy", 1.0)), 0.0)                     # [arb] emitted energy
         self.receiver_aperture_area = max(float(getattr(config, "receiver_aperture_area", 1.0)), eps)  # [arb] effective aperture
         self.atmosphere_extinction_coeff = max(float(getattr(config, "atmosphere_extinction_coeff", 0.0)), 0.0)  # [1/m] Beer-Lambert
-        self.min_detectable_power = max(float(getattr(config, "min_detectable_power", 1e-6)), eps)     # [arb] detection threshold
+        self.min_detectable_power = max(float(getattr(config, "min_detectable_power", 1e-6)), 0.0)     # [arb] detection threshold
         self.intensity_noise_std = max(float(getattr(config, "intensity_noise_std", 0.0)), 0.0)        # [arb] additive noise
 
         # ---------- boresight direction ----------
@@ -561,7 +561,11 @@ class Lidar:
         received_power = max(received_power, 0.0)  # physical floor
 
         # Detection probability: sigmoid-like function of SNR = P_rx / (P_rx + P_min).
-        detection_probability = float(np.clip(received_power / (received_power + self.min_detectable_power), 0.0, 1.0))
+        denominator = received_power + self.min_detectable_power
+        if denominator <= 0.0:
+            detection_probability = 0.0
+        else:
+            detection_probability = float(np.clip(received_power / denominator, 0.0, 1.0))
         if add_noise:
             if float(self.rng.random()) > detection_probability:
                 # Failed to detect -- below SNR threshold.
