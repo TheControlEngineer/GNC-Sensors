@@ -1,146 +1,134 @@
+
 # GNC-Sensors
 
-## Lidar Design and Validation Ongoing
+Parametric LiDAR sensor model for GNC simulation, with a statistical verification suite and flight data validation against OSIRIS-REx OLA.
 
-*Note:- The following test results and explanations are only for a high level overview, detailed rationale will be included in the design report and test report*
+## Sensor Model
 
-## Range Testing 
+The library implements a configurable time-of-flight LiDAR truth model covering the full measurement chain from pulse emission to timestamped output. All model parameters are exposed through a single configuration class, allowing the same code to represent different instruments by changing config values.
 
-Initial four tests were conducted on the LiDAR sensor model. 
+**Measurement pipeline** (`lidar.py`, 761 lines):
 
-### Test 1  Ranging
+Range noise (Gaussian floor + range-proportional) → bias random walk and drift → scale factor error → quantization → output saturation → dropout (range-dependent) → latency and jitter scheduling → platform-motion interpolation → output with optional truth metadata.
 
+**Radiometric detection** (`physics.py`, 398 lines):
 
-Goal:- The goal is to confirm the deterministic measurement pipeline reproduces ground truth range with no stochastic terms.
+Pulse energy and beam divergence → Lambertian + retro-reflective surface model → 1/r² geometric falloff → beam footprint area → Beer-Lambert two-way atmospheric extinction → SNR-based soft detection threshold. Includes a ray-casting scene engine with sphere, plane, AABB, and triangle primitives for closed-loop scan simulation.
 
-Method:- The noise into the LiDAR measurements were deactivated, and the measured range was compared against true range.
+**Utilities** (`math_utils.py`, 213 lines):
 
-Passing Criteria:-  Measured range equals true range at machine precision for every sampled distance from 0 to max range.
+3D vector operations, rotation matrices, spherical-to-Cartesian conversion, linear interpolation with extrapolation guards.
 
-Results :- **Passed**
+## Verification Suite
 
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/5f31926b-65fa-4dea-8ab3-126493ffc053" />
+Statistical test suite using `pytest` with auto-generated HTML reports containing embedded diagnostic plots, structured test metadata (description, goal, passing criteria), and formal acceptance logic based on confidence intervals rather than arbitrary tolerances.
 
-### Test 2 FOV Validity 
+**Test modules** (~5,200 lines across 9 modules):
 
-Goal:- Identify where measurement validity transitions between valid and out_of_fov relative to half FoV limits.
+| Module | Lines | Coverage |
+|---|---|---|
+| `test_noise.py` | 857 | Gaussian noise statistics, bias random walk, deterministic drift, scale factor, outlier injection rate and magnitude |
+| `test_range_accuracy.py` | 449 | Zero-noise boresight sweep, FoV boundary transitions, range gate boundaries |
+| `test_beam_geometry.py` | 649 | Planar wall intersection, full-frame sphere consistency, multi-object occlusion, rotated sensor orientation |
+| `test_dropout_quantization.py` | 583 | Dropout probability vs range with binomial CI, quantization staircase, saturation clipping vs invalidation |
+| `test_power_detection.py` | 564 | 1/r⁴ power law, Beer-Lambert extinction, Lambertian cosine, retro-reflectivity, SNR threshold, empty scene |
+| `test_timing.py` | 699 | Sampling rate clock, latency pipeline, jitter injection, time reversal reset, position interpolation |
+| `test_ola_specsheet.py` | 160 | OLA-LELT spec-sheet reproduction (see below) |
+| `test_ola_orbit_a_phase.py` | 915 | Orbit A flight data cross-validation (see below) |
+| `test_ola_crossval.py` | 329 | Orbit B flight data cross-validation (see below) |
 
-Method:- A target is placed at the edge of the field of view and swept across to the other side, the resultant measurements are checked to determine valid and invalid measurements.
+Noise and rate tests use chi-squared confidence intervals for variance validation and binomial confidence intervals for rate validation.
 
-Passing Criteria:- Sweep starts invalid, center is valid, sweep ends invalid, and epsilon checks at both boundaries match expected valid/invalid transitions.
+### Running the tests
 
-Result:- **Passed**
-
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/777622d1-2660-47d6-b147-9dd3ae58273b" />
-
-### Test 3 Range Validity
-This test checks measurement validity at different ranges 
-
-Goal:- Identify where measurement validity transitions between valid and out_of_range at range_min and range_max.
-
-Method:-  we sweep target range from below minimum range to above maximum range and evaluate boundary behavior.
-
-Passing Criteria:- Near range_min, minus epsilon is invalid while boundary and plus epsilon are valid; near range_max, minus epsilon and boundary are valid while plus epsilon is invalid; sweep starts invalid, is valid inside limits, and ends invalid.
-
-Result:- **Passed**
-
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/fd216479-285c-4248-ab62-4ddfdc11acd9" />
-
-### Test 4 Beam Geometry Validation
-
-Goal:-  Confirm hit geometry follows the expected wall intersection model, azimuth indices are ordered correctly, and azimuth spacing matches the configured linspace pattern.
-
-Method:- we perform a single elevation scan pattern at a planar wall perpendicular to boresight and validate beam geometry.
-
-Passing Criteria:- All beams return valid hits on the wall, hit points match analytic intersections, azimuth_index equals 0..N-1, and azimuth samples and spacing match linspace(az_min, az_max, N).
-
-Result:- **Passed**
-
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/0b3adfbe-4e96-4498-aa59-358dbee31db0" />
-
-## Noise test
-
-### 1. Monte Carlo validation of Gaussian range noise statistics against configured parameters.
-
-we collect 10000 samples at fixed ranges, verify empirical standard deviation matches the RSS noise formula within a chi squared confidence interval, and confirm near zero mean error.
-
-Goal: to confirm the stochastic range noise pipeline reproduces the expected distribution: 
-
-zero-mean Gaussian with 
-
-``` math 
-\sigma_{total}(r) = sqrt{(\sigma_{fixed})^2 + (k \cdot r)^2}
-
-```
-where, $`k`$ is the proportional error coeff, and $`r`$ is the measured range
-
-Passing criteria: At every test range the sample variance ratio $`\frac{s^2}{sigma^2}`$ lies within the 99 percent chi-squared confidence interval and the sample mean error is within $` \frac{3\cdot \sigma}{ \sqrt(N)}`$ of zero.
-
-Result: **Passed**
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/8d555dca-d274-4248-8f94-6d603388a9e9" />
-
-
-### 2. Ensemble Monte Carlo validation of the bias random walk process.
-
-we run N_ensemble=500 independent sensors over a long time series and verify the ensemble variance of bias grows linearly as :
-
-```math
-
-Var(bias(t)) = \sigma_{rw}^2 \cdot t 
-
-```
-Goal: Confirm the bias state performs a Wiener process,
-
-```math
-
-Var(bias(T) - bias(0)) = \sigma_{rw}^2 \cdot T 
-
+```bash
+pip install pytest pytest-html pytest-metadata matplotlib numpy
 ```
 
-Passing criteria: At every sampled time horizon the ensemble variance ratio Var/expected lies within the 99 percent chi squared confidence interval. Sample trajectories visually exhibit random walk behavior.
+```bash
+# Run core verification suite with HTML report
+pytest tests/test_lidar/ \
+  --ignore=tests/test_lidar/test_ola_crossval.py \
+  --ignore=tests/test_lidar/test_ola_orbit_a_phase.py \
+  --html=report.html --self-contained-html
 
-Result: **Passed**
-
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/317d5c00-5ea4-4f72-aea5-7f17bac656aa" />
-
-### 3. Deterministic bias drift component
-
-we verify that enabling only bias_drift_rate produces a linearly growing range error whose slope matches the configured drift rate exactly.
-
-Goal: To confirm the deterministic bias drift component,
-
-```math
-
- \epsilon = \dot b \cdot t 
-
+# Run OLA spec-sheet validation only (no data download required)
+pytest tests/test_lidar/test_ola_specsheet.py --html=report_ola_specsheet.html --self-contained-html
 ```
 
-with no stochastic scatter.
+## Flight Data Validation
 
-Passing criteria: Measured range error at every time step equals $`\dot b \cdot t`$ within machine precision.
+The model is validated against the OSIRIS-REx Laser Altimeter (OLA), a scanning LiDAR that operated at asteroid Bennu from 2018–2020. Validation proceeds at two levels.
 
-**Note :- $` \epsilon `$ is the error, and $`\dot b`$ is the bias drift rate**
+### Level 1 — Spec-sheet reproduction
 
-Result: *Passed*
+The model is configured with published OLA LELT parameters (Daly et al. 2017) and verified against the instrument's performance envelope over 10,000 Monte Carlo samples per test range:
 
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/7a1ef9f4-1244-4f85-b696-fae23f8c7a50" />
+- Range noise σ consistent with published 0.06 m precision at 99% confidence (chi-squared test)
+- Detection rate > 95% at 700 m on a 4.4% albedo target (Bennu-like)
+- Range gating correctly rejects outside the 500–1200 m operational envelope
 
-### 4. Monte Carlo validation of outlier injection rate and magnitude distribution
+No flight data required. Configuration in `ola_config.py`.
 
-With outlier probability as 0.10, we collect 10000 samples and verify the empirical outlier rate matches the configured probability. 
+### Level 2 — Flight data cross-validation
 
-Goal: Confirm the outlier injection mechanism fires at the correct rate and draws gross errors from the expected Gaussian distribution.
+Model output statistics are compared against calibrated OLA Level 2 data from the NASA Planetary Data System. The test loads PDS4 binary tables, reconstructs geometric input ranges from body-fixed and spacecraft position columns, derives instrument noise and dropout profiles from the data itself, configures the model to match, replays the same input ranges through the model, and compares per-range-bin statistics.
 
-Passing criteria: Empirical outlier rate lies within a 99 percent binomial confidence interval of  outlier probability. Outlier magnitude mean and standard deviation match outlier bias and outlier std within chi squared and normal confidence bounds.
+**Orbit A validation** (`test_ola_orbit_a_phase.py`): Self-calibrating pipeline that extracts noise profile σ(r), dropout profile P(r), bias, and scale factor from flight residuals, then verifies the configured model reproduces these statistics. Passing criteria: detection MAE ≤ 1%, σ relative error median ≤ 15% (p95 ≤ 25%, p99 ≤ 30%).
 
-Result: *Passed*
+**Orbit B validation** (`test_ola_crossval.py`): Compares LELT-configured model against ~700 m range Orbital B data using windowed precision estimates and binomial detection fraction tests.
 
-<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/8da953a4-e936-4b25-a220-4f095d5137b4" />
+To run flight data tests, download one OLA L2 file from the PDS archive and place it in the test data directory:
 
+```bash
+mkdir -p tests/test_lidar/data/ola_orbit_b
+cd tests/test_lidar/data/ola_orbit_b
+wget https://sbnarchive.psi.edu/pds4/orex/orex.ola/data_calibrated/orbit_b/20190701_ola_scil2id04000.dat
+wget https://sbnarchive.psi.edu/pds4/orex/orex.ola/data_calibrated/orbit_b/20190701_ola_scil2id04000.xml
+```
 
-Upcoming tests: Beam Geometry 
+```bash
+pytest tests/test_lidar/test_ola_crossval.py --html=report_ola_crossval.html --self-contained-html
+pytest tests/test_lidar/test_ola_orbit_a_phase.py --html=report_ola_orbit_a_phase.html --self-contained-html
+```
 
-The test is currently being developed and the progress is slow.
+Flight data files are gitignored. The tests skip gracefully when data is not present.
+
+## Repository Structure
+
+```
+GNC-Sensors/
+├── sensors/
+│   ├── Config.py              Configuration dataclass
+│   ├── lidar.py               Sensor model (measurement pipeline + radiometric detection)
+│   ├── physics.py             Ray-casting scene engine (sphere, plane, AABB, triangle)
+│   └── math_utils.py          Vector/rotation utilities
+├── tests/
+│   └── test_lidar/
+│       ├── conftest.py        HTML report configuration with custom columns and plot embedding
+│       ├── helpers.py         Chi-squared bounds, binomial CI, plot attachment utilities
+│       ├── ola_config.py      OLA-LELT instrument configuration
+│       ├── pds4_parser.py     PDS4 binary table parser for OLA flight data
+│       ├── extract_ola_statistics.py   Windowed precision and binned statistics
+│       ├── test_noise.py
+│       ├── test_range_accuracy.py
+│       ├── test_beam_geometry.py
+│       ├── test_dropout_quantization.py
+│       ├── test_power_detection.py
+│       ├── test_timing.py
+│       ├── test_ola_specsheet.py
+│       ├── test_ola_crossval.py
+│       ├── test_ola_orbit_a_phase.py
+│       └── data/ report             Flight data (gitignored)
+|         
+└── README.md
+```
+
+## References
+
+Daly, M. G. et al. (2017). The OSIRIS-REx Laser Altimeter (OLA) Investigation and Instrument. *Space Science Reviews*, 212(1-2), 899–924. [doi:10.1007/s11214-017-0375-3](https://doi.org/10.1007/s11214-017-0375-3)
+
+OLA flight data: NASA Planetary Data System, `urn:nasa:pds:orex.ola`. [PDS Archive](https://arcnav.psi.edu/urn:nasa:pds:orex.ola)
 
 
 
