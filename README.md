@@ -1,5 +1,9 @@
 
 # GNC-Sensors 
+
+![1771248367042](https://github.com/user-attachments/assets/509aed20-b2ac-4ceb-99db-bce19d1f7572)
+
+
 - Status :- *In active developement* 
 - Update :- *Validation ongoing against  OSIRIS-REx OLA* (03/03/2026)
 
