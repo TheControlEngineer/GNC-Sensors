@@ -1,11 +1,11 @@
 
-# GNC-Sensors
-
-Parametric LiDAR sensor model for GNC simulation, with a statistical verification suite and flight data validation against OSIRIS-REx OLA.
+# GNC-Sensors 
+- Status :- *In active developement* 
+- Update :- *Validation ongoing against  OSIRIS-REx OLA* (03/03/2026)
 
 ## Sensor Model
 
-The library implements a configurable time-of-flight LiDAR truth model covering the full measurement chain from pulse emission to timestamped output. All model parameters are exposed through a single configuration class, allowing the same code to represent different instruments by changing config values.
+The library first implements a configurable time-of-flight LiDAR model covering the full measurement chain from pulse emission to timestamped output. All model parameters are exposed through a single configuration class, allowing the same code to represent different instruments by changing config values.
 
 **Measurement pipeline** (`lidar.py`, 761 lines):
 
