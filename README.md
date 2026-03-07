@@ -11,15 +11,15 @@
 
 The library first implements a configurable time-of-flight LiDAR model covering the full measurement chain from pulse emission to timestamped output. All model parameters are exposed through a single configuration class, allowing the same code to represent different instruments by changing config values.
 
-**Measurement pipeline** (`lidar.py`, 761 lines):
+**Measurement pipeline** (`lidar.py`):
 
 Range noise (Gaussian floor + range-proportional) → bias random walk and drift → scale factor error → quantization → output saturation → dropout (range-dependent) → latency and jitter scheduling → platform-motion interpolation → output with optional truth metadata.
 
-**Radiometric detection** (`physics.py`, 398 lines):
+**Radiometric detection** (`physics.py`):
 
 Pulse energy and beam divergence → Lambertian + retro-reflective surface model → 1/r² geometric falloff → beam footprint area → Beer-Lambert two-way atmospheric extinction → SNR-based soft detection threshold. Includes a ray-casting scene engine with sphere, plane, AABB, and triangle primitives for closed-loop scan simulation.
 
-**Utilities** (`math_utils.py`, 213 lines):
+**Utilities** (`math_utils.py`):
 
 3D vector operations, rotation matrices, spherical-to-Cartesian conversion, linear interpolation with extrapolation guards.
 
@@ -27,19 +27,19 @@ Pulse energy and beam divergence → Lambertian + retro-reflective surface model
 
 Statistical test suite using `pytest` with auto-generated HTML reports containing embedded diagnostic plots, structured test metadata (description, goal, passing criteria), and formal acceptance logic based on confidence intervals rather than arbitrary tolerances.
 
-**Test modules** (~5,200 lines across 9 modules):
+**Test modules** (~5, across 9 modules):
 
-| Module | Lines | Coverage |
-|---|---|---|
-| `test_noise.py` | 857 | Gaussian noise statistics, bias random walk, deterministic drift, scale factor, outlier injection rate and magnitude |
-| `test_range_accuracy.py` | 449 | Zero-noise boresight sweep, FoV boundary transitions, range gate boundaries |
-| `test_beam_geometry.py` | 649 | Planar wall intersection, full-frame sphere consistency, multi-object occlusion, rotated sensor orientation |
-| `test_dropout_quantization.py` | 583 | Dropout probability vs range with binomial CI, quantization staircase, saturation clipping vs invalidation |
-| `test_power_detection.py` | 564 | 1/r⁴ power law, Beer-Lambert extinction, Lambertian cosine, retro-reflectivity, SNR threshold, empty scene |
-| `test_timing.py` | 699 | Sampling rate clock, latency pipeline, jitter injection, time reversal reset, position interpolation |
-| `test_ola_specsheet.py` | 160 | OLA-LELT spec-sheet reproduction (see below) |
-| `test_ola_orbit_a_phase.py` | 915 | Orbit A flight data cross-validation (see below) |
-| `test_ola_crossval.py` | 329 | Orbit B flight data cross-validation (see below) |
+| Module | Coverage |
+|---|---|
+| `test_noise.py`  | Gaussian noise statistics, bias random walk, deterministic drift, scale factor, outlier injection rate and magnitude |
+| `test_range_accuracy.py`  | Zero-noise boresight sweep, FoV boundary transitions, range gate boundaries |
+| `test_beam_geometry.py`  | Planar wall intersection, full-frame sphere consistency, multi-object occlusion, rotated sensor orientation |
+| `test_dropout_quantization.py`  | Dropout probability vs range with binomial CI, quantization staircase, saturation clipping vs invalidation |
+| `test_power_detection.py`  | 1/r⁴ power law, Beer-Lambert extinction, Lambertian cosine, retro-reflectivity, SNR threshold, empty scene |
+| `test_timing.py`  | Sampling rate clock, latency pipeline, jitter injection, time reversal reset, position interpolation |
+| `test_ola_specsheet.py`  | OLA-LELT spec-sheet reproduction (see below) |
+| `test_ola_orbit_a_phase.py`  | Orbit A flight data cross-validation (see below) |
+| `test_ola_crossval.py`  | Orbit B flight data cross-validation (see below) |
 
 Noise and rate tests use chi-squared confidence intervals for variance validation and binomial confidence intervals for rate validation.
 
